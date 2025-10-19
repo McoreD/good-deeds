@@ -1,0 +1,211 @@
+@page "/children"
+
+@inject ApiClient ApiClient
+@inject UserSettingsService Settings
+@inject NavigationManager Navigation
+
+<PageTitle>Children</PageTitle>
+
+<h2 class="fw-bold mb-3">Children</h2>
+<p class="text-muted">Create profiles for each child, manage their reward rate, and jump into their deed history.</p>
+
+@if (_isLoading)
+{
+    <div class="text-muted">Loading children…</div>
+}
+else if (_parentId is null)
+{
+    <div class="alert alert-info glass-panel">
+        Set up a parent account in <a href="settings">Settings</a> before adding children.
+    </div>
+}
+else
+{
+    <div class="row g-4">
+        <div class="col-12 col-lg-7">
+            <div class="card card-elevated">
+                <div class="card-body">
+                    <h5 class="card-title">Your children</h5>
+                    @if (_children.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No children yet. Add one using the form on the right.</p>
+                    }
+                    else
+                    {
+                        <div class="list-group list-group-flush">
+                            @foreach (var child in _children)
+                            {
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3">
+                                    <div class="flex-fill">
+                                        <div class="fw-semibold fs-5">@child.Child.Name</div>
+                                        <div class="text-muted small">Reward rate: @child.Child.DollarPerPoint.ToString("C2") per point</div>
+                                        <div class="small">Balance: <span class="fw-semibold @(child.Balance.Points >= 0 ? "points-positive" : "points-negative")">@child.Balance.Points pts</span> • @child.Balance.Dollars.ToString("C2")</div>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-primary btn-sm" @onclick='() => Navigation.NavigateTo($"children/{child.Child.Id}")'>View profile</button>
+                                        <button class="btn btn-outline-danger btn-sm" @onclick='() => ConfirmDelete(child.Child.Id)'>Remove</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-lg-5">
+            <div class="card card-elevated">
+                <div class="card-body">
+                    <h5 class="card-title">Add a child</h5>
+                    <EditForm Model="_form" OnValidSubmit="CreateChildAsync">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary />
+                        <div class="mb-3">
+                            <label class="form-label">Name</label>
+                            <InputText class="form-control" @bind-Value="_form.Name" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Dollar per point</label>
+                            <InputNumber class="form-control" @bind-Value="_form.DollarPerPoint" />
+                            <div class="form-text">Default is $1.00 per point.</div>
+                        </div>
+                        <button class="btn btn-primary w-100" type="submit" disabled="@_isSubmitting">@(_isSubmitting ? "Creating…" : "Add child")</button>
+                    </EditForm>
+                    @if (!string.IsNullOrWhiteSpace(_formFeedback))
+                    {
+                        <div class="alert alert-warning mt-3">@_formFeedback</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<ModalConfirmation Visible="@_showDeleteConfirm" Title="Remove child" OnConfirm="DeleteConfirmedAsync" OnCancel="HideDelete">
+    <p class="mb-0">Are you sure you want to remove this child? Deeds, balances, and redemptions will be removed as well.</p>
+</ModalConfirmation>
+
+@code {
+    private Guid? _parentId;
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private readonly List<ChildWithBalance> _children = [];
+    private readonly ChildForm _form = new();
+    private string? _formFeedback;
+    private Guid? _childIdPendingDelete;
+    private bool _showDeleteConfirm;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _parentId = await Settings.GetParentIdAsync();
+        if (_parentId is null)
+        {
+            _isLoading = false;
+            return;
+        }
+
+        await LoadChildrenAsync();
+    }
+
+    private async Task LoadChildrenAsync()
+    {
+        try
+        {
+            _children.Clear();
+            var children = await ApiClient.GetChildrenAsync(_parentId!.Value);
+            foreach (var child in children)
+            {
+                var balance = await ApiClient.GetChildBalanceAsync(child.Id) ?? new BalanceDto(child.Id, 0, 0m);
+                _children.Add(new ChildWithBalance(child, balance));
+            }
+        }
+        catch (Exception ex)
+        {
+            _formFeedback = ex.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task CreateChildAsync()
+    {
+        if (_parentId is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.Name))
+        {
+            _formFeedback = "Name is required";
+            return;
+        }
+
+        if (_form.DollarPerPoint <= 0)
+        {
+            _formFeedback = "Dollar per point must be greater than zero";
+            return;
+        }
+
+        _isSubmitting = true;
+        _formFeedback = null;
+
+        try
+        {
+            await ApiClient.CreateChildAsync(_parentId.Value, _form.Name.Trim(), _form.DollarPerPoint);
+            _form.Name = string.Empty;
+            _form.DollarPerPoint = 1.0m;
+            await LoadChildrenAsync();
+        }
+        catch (Exception ex)
+        {
+            _formFeedback = ex.Message;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDelete(Guid childId)
+    {
+        _childIdPendingDelete = childId;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DeleteConfirmedAsync()
+    {
+        if (_parentId is null || _childIdPendingDelete is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await ApiClient.DeleteChildAsync(_parentId.Value, _childIdPendingDelete.Value);
+            await LoadChildrenAsync();
+        }
+        catch (Exception ex)
+        {
+            _formFeedback = ex.Message;
+        }
+        finally
+        {
+            HideDelete();
+        }
+    }
+
+    private void HideDelete()
+    {
+        _showDeleteConfirm = false;
+        _childIdPendingDelete = null;
+    }
+
+    private sealed record ChildWithBalance(ChildDto Child, BalanceDto Balance);
+
+    private sealed class ChildForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public decimal DollarPerPoint { get; set; } = 1.0m;
+    }
+}

@@ -1,0 +1,206 @@
+@page "/settings"
+
+@inject ApiClient ApiClient
+@inject UserSettingsService UserSettings
+
+<PageTitle>Settings</PageTitle>
+
+<h2 class="fw-bold mb-3">Settings</h2>
+<p class="text-muted">Connect your parent account and optionally store a ChatGPT API key for deed suggestions.</p>
+
+<div class="row g-4">
+    <div class="col-12 col-lg-6">
+        <div class="card card-elevated">
+            <div class="card-body">
+                <h5 class="card-title">Parent account</h5>
+                <p class="text-muted">We use this parent ID for every API call. Creating or linking a parent happens in your Azure Functions backend.</p>
+
+                <EditForm Model="_parentForm" OnValidSubmit="SaveParentAsync">
+                    <DataAnnotationsValidator />
+                    <div class="mb-3">
+                        <label class="form-label">Parent email</label>
+                        <InputText class="form-control" @bind-Value="_parentForm.Email" />
+                        <div class="form-text">Use the same email each time to reconnect to the same parent.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" disabled="@_savingParent">@(_savingParent ? "Saving…" : "Save parent")</button>
+                    @if (_hasStoredParent)
+                    {
+                        <button type="button" class="btn btn-outline-danger ms-2" @onclick="ClearParentAsync">Forget parent</button>
+                    }
+                </EditForm>
+
+                @if (_parentFeedback is not null)
+                {
+                    <div class="alert alert-info mt-3">@_parentFeedback</div>
+                }
+
+                @if (_currentParent is not null)
+                {
+                    <div class="alert alert-success mt-3">
+                        <div class="fw-semibold">Parent linked</div>
+                        <div>Email: @_currentParent.Email</div>
+                        <div>ID: @_currentParent.Id</div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-6">
+        <div class="card card-elevated">
+            <div class="card-body">
+                <h5 class="card-title">ChatGPT integration</h5>
+                <p class="text-muted">Store your API key locally (never sent to our servers) to get AI-recommended point values when logging deeds.</p>
+
+                <EditForm Model="_chatGptForm" OnValidSubmit="SaveChatGptKeyAsync">
+                    <DataAnnotationsValidator />
+                    <div class="mb-3">
+                        <label class="form-label">ChatGPT API key</label>
+                        <InputText class="form-control" @bind-Value="_chatGptForm.ApiKey" type="password" />
+                        <div class="form-text">Key is saved in your browser’s local storage. Leave blank to clear.</div>
+                    </div>
+                    <button class="btn btn-primary" type="submit" disabled="@_savingChatGpt">@(_savingChatGpt ? "Saving…" : "Update key")</button>
+                </EditForm>
+
+                @if (_chatGptFeedback is not null)
+                {
+                    <div class="alert alert-info mt-3">@_chatGptFeedback</div>
+                }
+
+                @if (_hasChatGptKey)
+                {
+                    <div class="alert alert-success mt-3">API key stored securely in this browser.</div>
+                }
+                else
+                {
+                    <div class="alert alert-warning mt-3">No API key stored yet.</div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly ParentForm _parentForm = new();
+    private readonly ChatGptForm _chatGptForm = new();
+
+    private ParentDto? _currentParent;
+    private bool _hasStoredParent;
+    private bool _hasChatGptKey;
+    private bool _savingParent;
+    private bool _savingChatGpt;
+    private string? _parentFeedback;
+    private string? _chatGptFeedback;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var parentId = await UserSettings.GetParentIdAsync();
+        if (parentId is not null)
+        {
+            _hasStoredParent = true;
+            _currentParent = await ApiClient.GetParentAsync(parentId.Value);
+            if (_currentParent is not null)
+            {
+                _parentForm.Email = _currentParent.Email;
+            }
+        }
+        var apiKey = await UserSettings.GetChatGptKeyAsync();
+        _hasChatGptKey = !string.IsNullOrWhiteSpace(apiKey);
+        if (_hasChatGptKey)
+        {
+            _chatGptForm.ApiKey = "********";
+        }
+    }
+
+    private async Task SaveParentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_parentForm.Email))
+        {
+            _parentFeedback = "Email is required";
+            return;
+        }
+
+        _savingParent = true;
+        _parentFeedback = null;
+
+        try
+        {
+            var email = _parentForm.Email.Trim().ToLowerInvariant();
+            ParentDto parent;
+            try
+            {
+                parent = await ApiClient.CreateParentAsync(email);
+            }
+            catch (Exception ex)
+            {
+                var existing = await ApiClient.FindParentByEmailAsync(email);
+                if (existing is null)
+                {
+                    throw new InvalidOperationException(ex.Message);
+                }
+
+                parent = existing;
+                _parentFeedback = "Existing parent linked.";
+            }
+
+            _currentParent = parent;
+            await UserSettings.SetParentIdAsync(parent.Id);
+            _hasStoredParent = true;
+            _parentFeedback ??= "Parent saved.";
+        }
+        catch (Exception ex)
+        {
+            _parentFeedback = ex.Message;
+        }
+        finally
+        {
+            _savingParent = false;
+        }
+    }
+
+    private async Task ClearParentAsync()
+    {
+    await UserSettings.ClearParentIdAsync();
+        _hasStoredParent = false;
+        _currentParent = null;
+        _parentFeedback = "Parent removed from this browser.";
+    }
+
+    private async Task SaveChatGptKeyAsync()
+    {
+        _savingChatGpt = true;
+        _chatGptFeedback = null;
+
+        try
+        {
+            var key = string.IsNullOrWhiteSpace(_chatGptForm.ApiKey) || _chatGptForm.ApiKey == "********"
+                ? null
+                : _chatGptForm.ApiKey.Trim();
+
+            await UserSettings.SetChatGptKeyAsync(key);
+            _hasChatGptKey = key is not null;
+            _chatGptFeedback = _hasChatGptKey ? "API key saved locally." : "API key cleared.";
+            if (_hasChatGptKey)
+            {
+                _chatGptForm.ApiKey = "********";
+            }
+        }
+        catch (Exception ex)
+        {
+            _chatGptFeedback = ex.Message;
+        }
+        finally
+        {
+            _savingChatGpt = false;
+        }
+    }
+
+    private sealed class ParentForm
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private sealed class ChatGptForm
+    {
+        public string ApiKey { get; set; } = string.Empty;
+    }
+}

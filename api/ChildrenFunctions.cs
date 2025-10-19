@@ -133,6 +133,48 @@ public class ChildrenFunctions
         return res;
     }
 
+    [Function("GetChild")]
+    public async Task<HttpResponseData> GetChild(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "children/{childId:guid}")] HttpRequestData req,
+        Guid childId)
+    {
+        var child = await Data.GetChildById(_cs, childId);
+        if (child is null)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        var res = req.CreateResponse(HttpStatusCode.OK);
+        await res.WriteAsJsonAsync(child);
+        return res;
+    }
+
+    [Function("DeleteChild")]
+    public async Task<HttpResponseData> DeleteChild(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "parents/{parentId:guid}/children/{childId:guid}")] HttpRequestData req,
+        Guid parentId,
+        Guid childId)
+    {
+        var child = await Data.GetChildById(_cs, childId);
+        if (child is null)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        if (child.ParentId != parentId)
+        {
+            return await CreateErrorResponse(req, HttpStatusCode.Forbidden, "Child does not belong to this parent");
+        }
+
+        var removed = await Data.DeleteChild(_cs, childId);
+        if (!removed)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        return req.CreateResponse(HttpStatusCode.NoContent);
+    }
+
     private static async Task<HttpResponseData> CreateErrorResponse(HttpRequestData req, HttpStatusCode status, string message)
     {
         var res = req.CreateResponse(status);

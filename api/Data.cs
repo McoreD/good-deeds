@@ -3,6 +3,9 @@ using System.Text;
 using Dapper;
 using Npgsql;
 
+public record DeedDetails(Guid Id, Guid ChildId, Guid ParentId);
+public record DeedTypeDetails(Guid Id, Guid ParentId);
+
 public static class Data
 {
   public static NpgsqlConnection Conn(string cs) => new NpgsqlConnection(cs);
@@ -87,6 +90,14 @@ returning id, email;";
     const string sql = "select id, parent_id, name, dollar_per_point from children where id = @Id";
     await using var db = Conn(cs);
     return await db.QuerySingleOrDefaultAsync<ChildDto>(sql, new { Id = id });
+  }
+
+  public static async Task<bool> DeleteChild(string cs, Guid childId)
+  {
+    const string sql = "delete from children where id = @Id";
+    await using var db = Conn(cs);
+    var affected = await db.ExecuteAsync(sql, new { Id = childId });
+    return affected > 0;
   }
 
   public static async Task<IEnumerable<ChildDto>> GetChildrenForParent(string cs, Guid parentId)
@@ -191,6 +202,14 @@ returning id, parent_id, name, points, active;";
     });
   }
 
+  public static async Task<bool> DeleteDeedType(string cs, Guid deedTypeId)
+  {
+    const string sql = "delete from deed_types where id = @Id";
+    await using var db = Conn(cs);
+    var affected = await db.ExecuteAsync(sql, new { Id = deedTypeId });
+    return affected > 0;
+  }
+
   public static async Task<DeedDto> CreateDeed(string cs, Guid childId, Guid deedTypeId, int points, string? note, Guid createdBy, DateTimeOffset occurredAt)
   {
     const string sql = @"
@@ -222,6 +241,43 @@ order by occurred_at desc;";
 
     await using var db = Conn(cs);
     return await db.QueryAsync<DeedDto>(sql, new { ChildId = childId });
+  }
+
+  public static async Task<DeedDto?> GetDeedById(string cs, Guid deedId)
+  {
+    const string sql = @"
+select id, child_id, deed_type_id, points, note, occurred_at, created_by
+from deeds where id = @Id";
+
+    await using var db = Conn(cs);
+    return await db.QuerySingleOrDefaultAsync<DeedDto>(sql, new { Id = deedId });
+  }
+
+  public static async Task<DeedDetails?> GetDeedDetails(string cs, Guid deedId)
+  {
+    const string sql = @"
+select d.id, d.child_id, c.parent_id
+from deeds d
+join children c on c.id = d.child_id
+where d.id = @Id";
+
+    await using var db = Conn(cs);
+    return await db.QuerySingleOrDefaultAsync<DeedDetails>(sql, new { Id = deedId });
+  }
+
+  public static async Task<bool> DeleteDeed(string cs, Guid deedId)
+  {
+    const string sql = "delete from deeds where id = @Id";
+    await using var db = Conn(cs);
+    var affected = await db.ExecuteAsync(sql, new { Id = deedId });
+    return affected > 0;
+  }
+
+  public static async Task<DeedTypeDetails?> GetDeedTypeDetails(string cs, Guid deedTypeId)
+  {
+    const string sql = "select id, parent_id from deed_types where id = @Id";
+    await using var db = Conn(cs);
+    return await db.QuerySingleOrDefaultAsync<DeedTypeDetails>(sql, new { Id = deedTypeId });
   }
 
   public static async Task<RedemptionDto> CreateRedemption(string cs, Guid childId, int points, string? description, Guid createdBy, DateTimeOffset createdAt)

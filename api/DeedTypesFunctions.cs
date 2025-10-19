@@ -142,6 +142,32 @@ public class DeedTypesFunctions
         return res;
     }
 
+    [Function("DeleteDeedType")]
+    public async Task<HttpResponseData> DeleteDeedType(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "parents/{parentId:guid}/deed-types/{deedTypeId:guid}")] HttpRequestData req,
+        Guid parentId,
+        Guid deedTypeId)
+    {
+        var details = await Data.GetDeedTypeDetails(_cs, deedTypeId);
+        if (details is null)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        if (details.ParentId != parentId)
+        {
+            return await CreateErrorResponse(req, HttpStatusCode.Forbidden, "Deed type does not belong to this parent");
+        }
+
+        var removed = await Data.DeleteDeedType(_cs, deedTypeId);
+        if (!removed)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        return req.CreateResponse(HttpStatusCode.NoContent);
+    }
+
     private static async Task<HttpResponseData> CreateErrorResponse(HttpRequestData req, HttpStatusCode status, string message)
     {
         var res = req.CreateResponse(status);

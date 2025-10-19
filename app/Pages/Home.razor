@@ -1,7 +1,119 @@
 ﻿@page "/"
 
-<PageTitle>Home</PageTitle>
+@inject ApiClient ApiClient
+@inject UserSettingsService Settings
+@inject NavigationManager Navigation
 
-<h1>Hello, world!</h1>
+<PageTitle>Dashboard</PageTitle>
 
-Welcome to your new app.
+<div class="hero-card mb-4">
+	<h1 class="display-6 fw-bold">Track every good deed with ease</h1>
+	<p class="text-muted mb-4">
+		Watch your children build healthy habits, reward positive behaviour, and stay on top of redemptions – all synced with your Good Deeds API.
+	</p>
+	<button class="btn btn-primary btn-lg" @onclick='() => Navigation.NavigateTo("children")'>Manage Children</button>
+</div>
+
+@if (_isLoading)
+{
+	<div class="text-center text-muted">Loading dashboard…</div>
+}
+else if (_parentId is null)
+{
+	<div class="alert alert-info glass-panel">
+		<strong>Let’s get you set up.</strong>
+		<div class="mt-2">Head over to <a href="settings">Settings</a> to connect your parent account before managing children and deeds.</div>
+	</div>
+}
+else if (_children.Count == 0)
+{
+	<div class="glass-panel p-4 text-center">
+		<h5 class="fw-semibold mb-2">No children added yet</h5>
+		<p class="text-muted">Add your first child to start tracking deeds and balances.</p>
+	<button class="btn btn-outline-primary" @onclick='() => Navigation.NavigateTo("children")'>Add a Child</button>
+	</div>
+}
+else
+{
+	<div class="row g-4">
+		<div class="col-12 col-lg-4">
+			<div class="card card-elevated h-100">
+				<div class="card-body">
+					<h5 class="card-title">Total Family Balance</h5>
+					<p class="display-6 fw-bold">@_totalPoints pts</p>
+					<p class="text-muted mb-0">Equivalent to @_totalDollars.ToString("C2")</p>
+				</div>
+			</div>
+		</div>
+		<div class="col-12 col-lg-8">
+			<div class="card card-elevated h-100">
+				<div class="card-body">
+					<h5 class="card-title">Children Snapshot</h5>
+					<div class="list-group list-group-flush">
+						@foreach (var child in _children)
+						{
+							<button class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" @onclick='() => Navigation.NavigateTo($"children/{child.Id}")'>
+								<div>
+									<div class="fw-semibold">@child.Name</div>
+									<small class="text-muted">@child.DeedsCount deed(s) logged</small>
+								</div>
+								<div class="text-end">
+									<div class="fw-semibold @(child.Points >= 0 ? "points-positive" : "points-negative")">@child.Points pts</div>
+									<small class="text-muted">@child.Dollars.ToString("C2")</small>
+								</div>
+							</button>
+						}
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+@code {
+	private Guid? _parentId;
+	private bool _isLoading = true;
+	private readonly List<ChildSummary> _children = [];
+	private int _totalPoints;
+	private decimal _totalDollars;
+
+	protected override async Task OnInitializedAsync()
+	{
+		_parentId = await Settings.GetParentIdAsync();
+		if (_parentId is null)
+		{
+			_isLoading = false;
+			return;
+		}
+
+		try
+		{
+			var children = await ApiClient.GetChildrenAsync(_parentId.Value);
+			var balanceTasks = children.Select(async child => new
+			{
+				Child = child,
+				Balance = await ApiClient.GetChildBalanceAsync(child.Id),
+				Deeds = await ApiClient.GetDeedsForChildAsync(child.Id)
+			});
+
+			foreach (var result in await Task.WhenAll(balanceTasks))
+			{
+				var points = result.Balance?.Points ?? 0;
+				var dollars = result.Balance?.Dollars ?? 0m;
+				_children.Add(new ChildSummary(result.Child.Id, result.Child.Name, points, dollars, result.Deeds.Count));
+				_totalPoints += points;
+				_totalDollars += dollars;
+			}
+		}
+		catch
+		{
+			// ignored for now; the UI will stay minimal
+		}
+		finally
+		{
+			_isLoading = false;
+		}
+	}
+
+	private sealed record ChildSummary(Guid Id, string Name, int Points, decimal Dollars, int DeedsCount);
+}

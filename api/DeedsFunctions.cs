@@ -90,6 +90,33 @@ public class DeedsFunctions
         return res;
     }
 
+    [Function("DeleteDeed")]
+    public async Task<HttpResponseData> DeleteDeed(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "children/{childId:guid}/deeds/{deedId:guid}")] HttpRequestData req,
+        Guid childId,
+        Guid deedId)
+    {
+        var child = await Data.GetChildById(_cs, childId);
+        if (child is null)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        var details = await Data.GetDeedDetails(_cs, deedId);
+        if (details is null || details.ChildId != childId)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        var removed = await Data.DeleteDeed(_cs, deedId);
+        if (!removed)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        return req.CreateResponse(HttpStatusCode.NoContent);
+    }
+
     private static async Task<HttpResponseData> CreateErrorResponse(HttpRequestData req, HttpStatusCode status, string message)
     {
         var res = req.CreateResponse(status);

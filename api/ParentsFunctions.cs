@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 
@@ -50,6 +51,28 @@ public class ParentsFunctions
         Guid id)
     {
         var parent = await Data.GetParentById(_cs, id);
+        if (parent is null)
+        {
+            return req.CreateResponse(HttpStatusCode.NotFound);
+        }
+
+        var res = req.CreateResponse(HttpStatusCode.OK);
+        await res.WriteAsJsonAsync(parent);
+        return res;
+    }
+
+    [Function("FindParentByEmail")]
+    public async Task<HttpResponseData> FindParentByEmail(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "parents")] HttpRequestData req)
+    {
+    var query = QueryHelpers.ParseQuery(req.Url.Query);
+    var email = query.TryGetValue("email", out var values) ? values.ToString().Trim() : null;
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return await CreateErrorResponse(req, HttpStatusCode.BadRequest, "Email query parameter is required");
+        }
+
+        var parent = await Data.GetParentByEmail(_cs, email.ToLowerInvariant());
         if (parent is null)
         {
             return req.CreateResponse(HttpStatusCode.NotFound);
